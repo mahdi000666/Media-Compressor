@@ -1,9 +1,13 @@
 package com.example.mediacompressor
 
 import android.Manifest
+import android.content.ContentValues
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.os.Environment
+import android.provider.MediaStore
 import android.provider.OpenableColumns
 import android.widget.*
 import androidx.activity.result.contract.ActivityResultContracts
@@ -16,6 +20,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.FileInputStream
+import java.io.FileOutputStream
+import java.text.SimpleDateFormat
+import java.util.*
 
 class MainActivity : AppCompatActivity() {
     private lateinit var listView: ListView
@@ -91,20 +99,31 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun checkPermissions() {
+        val permissionsToRequest = mutableListOf<String>()
+
         if (ContextCompat.checkSelfPermission(
                 this,
                 Manifest.permission.READ_EXTERNAL_STORAGE
-            ) != PackageManager.PERMISSION_GRANTED ||
-            ContextCompat.checkSelfPermission(
-                this,
-                Manifest.permission.WRITE_EXTERNAL_STORAGE
             ) != PackageManager.PERMISSION_GRANTED
         ) {
-            ActivityCompat.requestPermissions(
-                this, arrayOf(
-                    Manifest.permission.READ_EXTERNAL_STORAGE,
+            permissionsToRequest.add(Manifest.permission.READ_EXTERNAL_STORAGE)
+        }
+
+        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P) {
+            if (ContextCompat.checkSelfPermission(
+                    this,
                     Manifest.permission.WRITE_EXTERNAL_STORAGE
-                ), PERMISSION_REQUEST_CODE
+                ) != PackageManager.PERMISSION_GRANTED
+            ) {
+                permissionsToRequest.add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+            }
+        }
+
+        if (permissionsToRequest.isNotEmpty()) {
+            ActivityCompat.requestPermissions(
+                this,
+                permissionsToRequest.toTypedArray(),
+                PERMISSION_REQUEST_CODE
             )
         }
     }
@@ -130,7 +149,7 @@ class MainActivity : AppCompatActivity() {
         return when (fileName.substringAfterLast('.').lowercase()) {
             "jpg", "jpeg", "png", "webp" -> FileType.IMAGE
             "gif" -> FileType.GIF
-            "mp4", "webm" -> FileType.VIDEO
+            "mp4", "mkv", "avi", "mov", "webm", "flv" -> FileType.VIDEO
             else -> FileType.UNKNOWN
         }
     }
@@ -181,42 +200,75 @@ class MainActivity : AppCompatActivity() {
 
     private fun compressImage(task: FileTask, quality: Int) {
         val inputFile = copyUriToCache(task.uri, task.displayName)
-        val outputFile = File(
-            getExternalFilesDir(null),
-            task.displayName.replaceBeforeLast(
-                '.',
-                task.displayName.substringBeforeLast('.') + "_compressed"
-            )
-        )
+        val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
+        val outputName = "${task.displayName.substringBeforeLast('.')}_${timestamp}_compressed.${task.displayName.substringAfterLast('.')}"
 
-        val cmd = "-i ${inputFile.absolutePath} -q:v $quality ${outputFile.absolutePath}"
+        val outputFile = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), outputName)
+
+        // Create downloads directory if it doesn't exist
+        outputFile.parentFile?.mkdirs()
+
+        // For JPEG use -q:v, for PNG use -compression_level
+        val extension = task.displayName.substringAfterLast('.').lowercase()
+        val cmd = if (extension == "png") {
+            // PNG compression (0-9, where 9 is highest compression)
+            val pngQuality = (quality / 11).coerceIn(0, 9) // Convert 1-100 to 0-9
+            "-i ${inputFile.absolutePath} -compression_level $pngQuality ${outputFile.absolutePath}"
+        } else {
+            // JPEG/WebP compression (1-31 for JPEG, 1-100 for WebP)
+            val q = when (extension) {
+                "webp" -> quality
+                else -> (quality / 3.2).toInt().coerceIn(1, 31) // Convert 1-100 to 1-31
+            }
+            "-i ${inputFile.absolutePath} -q:v $q ${outputFile.absolutePath}"
+        }
+
         FFmpegKit.execute(cmd)
+
+        // Save to MediaStore for Android 10+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            saveToMediaStore(outputFile, "image/${extension}")
+        }
 
         inputFile.delete()
     }
 
     private fun compressVideo(task: FileTask, quality: Int) {
         val inputFile = copyUriToCache(task.uri, task.displayName)
-        val outputFile = File(
-            getExternalFilesDir(null),
-            task.displayName.replaceBeforeLast(
-                '.',
-                task.displayName.substringBeforeLast('.') + "_compressed"
-            )
-        )
+        val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
+        val outputName = "${task.displayName.substringBeforeLast('.')}_${timestamp}_compressed.mp4"
 
-        val bitrate = (2000 * (quality / 100.0)).toInt()
-        val cmd =
-            "-i ${inputFile.absolutePath} -c:v libx264 -b:v ${bitrate}k -c:a aac -b:a 128k ${outputFile.absolutePath}"
+        val outputFile = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), outputName)
+
+        // Create downloads directory if it doesn't exist
+        outputFile.parentFile?.mkdirs()
+
+        // For video, we'll use mpeg4 encoder which is more widely available
+        // Convert quality (1-100) to a bitrate (500k-5000k)
+        val bitrate = (500 + (quality * 45)).toInt() // 500k to 5000k
+
+        // Using mpeg4 encoder which is more likely to be available
+        val cmd = "-i ${inputFile.absolutePath} -c:v mpeg4 -b:v ${bitrate}k -c:a aac -b:a 128k ${outputFile.absolutePath}"
 
         FFmpegKit.execute(cmd)
+
+        // Save to MediaStore for Android 10+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            saveToMediaStore(outputFile, "video/mp4")
+        }
+
         inputFile.delete()
     }
 
     private fun compressGif(task: FileTask, quality: Int) {
         val inputFile = copyUriToCache(task.uri, task.displayName)
-        val outputName = task.displayName.substringBeforeLast('.') + "_compressed.gif"
-        val outputFile = File(getExternalFilesDir(null), outputName)
+        val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
+        val outputName = "${task.displayName.substringBeforeLast('.')}_${timestamp}_compressed.gif"
+
+        val outputFile = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), outputName)
+
+        // Create downloads directory if it doesn't exist
+        outputFile.parentFile?.mkdirs()
 
         val scaleFactor = 0.25 + (quality / 100.0) * 0.75
         val fps = when {
@@ -225,10 +277,15 @@ class MainActivity : AppCompatActivity() {
             else -> 25
         }
 
-        val cmd =
-            "-i ${inputFile.absolutePath} -vf scale=iw*$scaleFactor:ih*$scaleFactor,fps=$fps ${outputFile.absolutePath}"
+        val cmd = "-i ${inputFile.absolutePath} -vf scale=iw*$scaleFactor:ih*$scaleFactor,fps=$fps ${outputFile.absolutePath}"
 
         FFmpegKit.execute(cmd)
+
+        // Save to MediaStore for Android 10+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            saveToMediaStore(outputFile, "image/gif")
+        }
+
         inputFile.delete()
     }
 
@@ -240,6 +297,27 @@ class MainActivity : AppCompatActivity() {
             }
         }
         return cacheFile
+    }
+
+    @Suppress("DEPRECATION")
+    private fun saveToMediaStore(file: File, mimeType: String) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val values = ContentValues().apply {
+                put(MediaStore.MediaColumns.DISPLAY_NAME, file.name)
+                put(MediaStore.MediaColumns.MIME_TYPE, mimeType)
+                put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+            }
+
+            val uri = contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+            uri?.let {
+                contentResolver.openOutputStream(it)?.use { outputStream ->
+                    FileInputStream(file).use { inputStream ->
+                        inputStream.copyTo(outputStream)
+                    }
+                }
+            }
+            file.delete() // Delete the temporary file
+        }
     }
 
     companion object {
