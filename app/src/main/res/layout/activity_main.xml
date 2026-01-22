@@ -18,7 +18,8 @@
         android:layout_height="0dp"
         android:layout_weight="1"
         android:layout_marginTop="8dp"
-        android:background="@android:drawable/edit_text" />
+        android:background="@android:drawable/edit_text"
+        android:choiceMode="multipleChoice" />
 
     <LinearLayout
         android:layout_width="match_parent"
@@ -28,14 +29,24 @@
 
         <Button
             android:id="@+id/addFilesBtn"
-            android:layout_width="wrap_content"
+            android:layout_width="0dp"
             android:layout_height="wrap_content"
-            android:text="Add Files" />
+            android:layout_weight="1"
+            android:text="Add" />
+
+        <Button
+            android:id="@+id/removeBtn"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginStart="8dp"
+            android:text="Remove" />
 
         <Button
             android:id="@+id/clearBtn"
-            android:layout_width="wrap_content"
+            android:layout_width="0dp"
             android:layout_height="wrap_content"
+            android:layout_weight="1"
             android:layout_marginStart="8dp"
             android:text="Clear" />
     </LinearLayout>

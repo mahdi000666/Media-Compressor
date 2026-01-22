@@ -31,12 +31,13 @@ class MainActivity : AppCompatActivity() {
     private lateinit var qualityLabel: TextView
     private lateinit var compressBtn: Button
     private lateinit var progressBar: ProgressBar
+    private lateinit var removeBtn: Button
 
     private val fileList = mutableListOf<FileTask>()
     private val adapter by lazy {
         ArrayAdapter(
             this,
-            android.R.layout.simple_list_item_1,
+            android.R.layout.simple_list_item_multiple_choice,
             fileList.map { it.displayName })
     }
 
@@ -65,8 +66,10 @@ class MainActivity : AppCompatActivity() {
         qualityLabel = findViewById(R.id.qualityLabel)
         compressBtn = findViewById(R.id.compressBtn)
         progressBar = findViewById(R.id.progressBar)
+        removeBtn = findViewById(R.id.removeBtn)
 
         listView.adapter = adapter
+        listView.choiceMode = ListView.CHOICE_MODE_MULTIPLE
         qualitySlider.max = 99
         qualitySlider.progress = 74
         updateQualityLabel()
@@ -86,6 +89,10 @@ class MainActivity : AppCompatActivity() {
             updateListView()
         }
 
+        removeBtn.setOnClickListener {
+            removeSelectedFiles()
+        }
+
         qualitySlider.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
                 updateQualityLabel()
@@ -96,6 +103,49 @@ class MainActivity : AppCompatActivity() {
         })
 
         compressBtn.setOnClickListener { startCompression() }
+
+        // Update remove button state based on selection
+        listView.setOnItemClickListener { _, _, _, _ ->
+            updateRemoveButtonState()
+        }
+    }
+
+    private fun updateRemoveButtonState() {
+        val selectedCount = listView.checkedItemCount
+        removeBtn.isEnabled = selectedCount > 0
+        removeBtn.text = if (selectedCount > 0) {
+            "Remove ($selectedCount)"
+        } else {
+            "Remove Selected"
+        }
+    }
+
+    private fun removeSelectedFiles() {
+        // Get checked positions in reverse order to avoid index shifting
+        val checkedPositions = listView.checkedItemPositions
+        val positionsToRemove = mutableListOf<Int>()
+
+        for (i in (fileList.size - 1) downTo 0) {
+            if (checkedPositions.get(i, false)) {
+                positionsToRemove.add(i)
+            }
+        }
+
+        // Remove from fileList
+        for (position in positionsToRemove) {
+            if (position < fileList.size) {
+                fileList.removeAt(position)
+            }
+        }
+
+        // Clear selections
+        listView.clearChoices()
+
+        // Update UI
+        updateListView()
+        updateRemoveButtonState()
+
+        Toast.makeText(this, "Removed ${positionsToRemove.size} file(s)", Toast.LENGTH_SHORT).show()
     }
 
     private fun checkPermissions() {
@@ -158,6 +208,7 @@ class MainActivity : AppCompatActivity() {
         adapter.clear()
         adapter.addAll(fileList.map { it.displayName })
         adapter.notifyDataSetChanged()
+        updateRemoveButtonState()
     }
 
     private fun updateQualityLabel() {
