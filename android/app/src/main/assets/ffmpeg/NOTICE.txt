@@ -1,0 +1,12 @@
+FFmpegKit Full-GPL for Android
+Maven dependency: com.antonkarpenko:ffmpeg-kit-full-gpl:2.2.3
+FFmpeg version: 8.1.2
+Native package sources and build scripts:
+https://github.com/sk3llo/ffmpeg_kit_flutter_android/tree/full-gpl
+FFmpeg sources: https://github.com/FFmpeg/FFmpeg/tree/n8.1.2
+
+The native bundle includes LGPL/GPL components and GPL codecs, including x264.
+GPL-3.0.txt and LGPL-3.0.txt accompany the application.
+Redistribution must preserve the applicable licenses and provide corresponding
+source as required by them. Consult the upstream build scripts for the native
+bundle's external libraries and configuration.
