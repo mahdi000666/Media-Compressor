@@ -45,6 +45,18 @@ Windows output: `build/windows/x64/runner/Release/`—distribute the **whole fol
 
 Android output: `build/app/outputs/flutter-apk/app-release.apk`. The universal APK includes ARMv7, ARM64 and x86_64 and is too large for a normal GitHub Git file; compiled downloads belong in release assets, not the source tree.
 
+### Android hardware-decode experiment
+
+Hardware decoding is off by default. To build the opt-in experiment:
+
+```powershell
+flutter build apk --release --dart-define=MC_ANDROID_HW_DECODE=true
+```
+
+This adds MediaCodec decode attempts before the existing software-decode path. Failed attempts retry with software decoding and hardware encoding, then x264. Audio settings and output bitrates stay unchanged. Scaling and cuts still use CPU-accessible frames; this is not a zero-copy pipeline. Rebuild without the define to disable the experiment.
+
+On the Redmi Note 11S test, the experiment took about 30 s versus the 21 s baseline, and its export decoded seven fewer video frames. Hardware decoding is not recommended for releases; ship without the define.
+
 Android release currently uses Flutter's development signing configuration. A build signed on another computer may not update an existing installation signed with a different key. Configure production signing separately and never commit its keys or passwords.
 
 ## Verify
@@ -66,4 +78,6 @@ python scripts/check_android_ffmpeg_jni.py build/app/outputs/flutter-apk/app-rel
 
 Keep `android/app/proguard-rules.pro`: FFmpeg registers native tables and looks up callbacks by name, so removing the declarations can break a shrinking-enabled release.
 
-Finalization checks passed: 73 tests, analysis, formatting, Windows/Android release builds, the full JNI guard, APK signature and 16 KiB ZIP alignment. Normal build 6 was not installed or UI-tested on the phone; these automated checks do not establish immediate Android preview rendering or every storage/lifecycle edge case.
+The earlier v1.0.0 finalization checks passed: 73 tests, analysis, formatting, Windows/Android release builds, the full JNI guard, APK signature and 16 KiB ZIP alignment. Normal build 6 was later retested on the Redmi Note 11S, and the user confirmed baseline speed after disabling hardware decoding.
+
+For v1.1.0 (build 7), all 86 tests, analysis, formatting, Windows/Android release builds, the full JNI guard, APK signature and 16 KiB ZIP alignment passed. Build 7 was not installed or UI-tested on the phone; these checks do not establish every cancellation/lifecycle case or behavior on other devices.

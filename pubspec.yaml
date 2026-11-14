@@ -1,7 +1,7 @@
 name: media_compressor
 description: "Offline image and video compression for Windows and Android."
 publish_to: 'none'
-version: 1.0.0+6
+version: 1.1.0+7
 
 environment:
   sdk: ^3.13.7

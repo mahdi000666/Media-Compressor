@@ -17,13 +17,20 @@ final class CompressionFailure implements Exception {
 }
 
 final class FfmpegCompressor {
-  FfmpegCompressor({required this.temporaryDirectory, String? executable})
-    : executable =
-          executable ??
-          p.join(p.dirname(Platform.resolvedExecutable), 'ffmpeg.exe');
+  FfmpegCompressor({
+    required this.temporaryDirectory,
+    String? executable,
+    bool? isAndroid,
+    this.hardwareDecode = const bool.fromEnvironment('MC_ANDROID_HW_DECODE'),
+  }) : isAndroid = isAndroid ?? Platform.isAndroid,
+       executable =
+           executable ??
+           p.join(p.dirname(Platform.resolvedExecutable), 'ffmpeg.exe');
 
   final Directory temporaryDirectory;
   final String executable;
+  final bool isAndroid;
+  final bool hardwareDecode;
   final Map<CompletedOutput, Directory> _outputs = Map.identity();
   late final AndroidFfmpeg _androidEncoder = AndroidFfmpeg();
   Process? _process;
@@ -32,7 +39,7 @@ final class FfmpegCompressor {
 
   void cancel() {
     _cancelled = true;
-    if (Platform.isAndroid) _androidEncoder.cancel();
+    if (isAndroid) _androidEncoder.cancel();
     _process?.kill();
   }
 
@@ -131,16 +138,25 @@ final class FfmpegCompressor {
         'libx264',
         '-preset',
         // Phone CPUs are much slower; veryfast roughly halves x264 time.
-        Platform.isAndroid ? 'veryfast' : 'medium',
+        isAndroid ? 'veryfast' : 'medium',
         '-crf',
         [28, 23, 18][quality.index].toString(),
         '-pix_fmt',
         'yuv420p',
       ];
-      final videoAttempts = Platform.isAndroid && video
-          ? [..._androidHardwareArgs(quality, maxEdge), softwareVideoArgs]
-          : [softwareVideoArgs];
-      List<String> buildArgs(List<String> videoEncoderArgs) => [
+      final hardwareVideoArgs = isAndroid && video
+          ? _androidHardwareArgs(quality, maxEdge)
+          : <List<String>>[];
+      final videoAttempts = [
+        if (hardwareDecode)
+          for (final args in hardwareVideoArgs)
+            (input: ['-hwaccel', 'mediacodec'], output: args),
+        for (final args in hardwareVideoArgs) (input: <String>[], output: args),
+        (input: <String>[], output: softwareVideoArgs),
+      ];
+      List<String> buildArgs(
+        ({List<String> input, List<String> output}) attempt,
+      ) => [
         '-hide_banner',
         '-loglevel',
         'error',
@@ -157,6 +173,7 @@ final class FfmpegCompressor {
           '-safe',
           '0',
         ],
+        ...attempt.input,
         '-i',
         input,
         '-map',
@@ -175,7 +192,7 @@ final class FfmpegCompressor {
         if (video) ...[
           '-map',
           '0:a:0?',
-          ...videoEncoderArgs,
+          ...attempt.output,
           '-c:a',
           'aac',
           '-b:a',
@@ -202,7 +219,7 @@ final class FfmpegCompressor {
             [8, 5, 2][quality.index].toString(),
           ],
         ],
-        if (!Platform.isAndroid) ...['-progress', 'pipe:1'],
+        if (!isAndroid) ...['-progress', 'pipe:1'],
         '-nostats',
         output.path,
       ];
@@ -226,7 +243,7 @@ final class FfmpegCompressor {
           if (_cancelled) return null;
           onProgress?.call(Duration.zero);
         }
-        exitCode = Platform.isAndroid
+        exitCode = isAndroid
             ? await _runAndroid(buildArgs(videoAttempts[index]), onProgress)
             : await _runProcess(buildArgs(videoAttempts[index]), onProgress);
         final size = await outputLength();
