@@ -27,8 +27,8 @@ Files are processed locally. There is no server, account or upload service.
 
 ## Known limits
 
-- Android preview catches up after a **1–2 second delay** while adjusting the range. This remains unresolved.
-- Android compression/cutting was reported slower than Windows; export speed has not been benchmarked on identical inputs/settings.
+- Android preview follows the range handle immediately during dragging, but those frames snap to the nearest keyframe; the exact frame appears after release.
+- Android video export tries the device's H.264 encoder (MediaCodec) first and falls back to x264 `veryfast`. Hardware output is VBR at a fixed bitrate, so size/quality differ from Windows. On a Redmi Note 11S, a 35 s 1080p60 clip compressed in about 21 s (Windows: about 12 s).
 - Video cuts re-encode frames and audio; they are not lossless copies or guaranteed millisecond-exact boundaries.
 - Only the first audio track is retained. Metadata, chapters and subtitles are not copied; HDR handling is unvalidated.
 - Animated images export their first frame. Compression can produce a larger file for some inputs.

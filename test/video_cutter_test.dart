@@ -236,6 +236,30 @@ void main() {
         await encoder.discard(output);
       },
     );
+    test('keeps the whole audio track when chunks straddle the cut', () async {
+      final chunked = p.join(root.path, 'chunked.mp4');
+      await ffmpeg([
+        '-i',
+        input.path,
+        '-c',
+        'copy',
+        '-movflags',
+        'frag_keyframe+empty_moov',
+        '-frag_duration',
+        '1000000',
+        chunked,
+      ]);
+      final output = (await encoder.compress(
+        MediaSource(
+          reference: chunked,
+          displayName: 'chunked.mp4',
+          kind: MediaKind.video,
+        ),
+        sections: [section(500, 2500)],
+      ))!;
+      await verify(output, 2, [255, 0, 0], [0, 0, 255]);
+      await encoder.discard(output);
+    });
     test(
       'exports intervals inside a GOP rather than including earlier frames',
       () async {
@@ -318,5 +342,30 @@ void main() {
         },
       );
     }
+
+    test(
+      'native preview can switch between keyframe and precise seeks',
+      () async {
+        MediaKit.ensureInitialized(
+          libmpv: p.absolute('build/windows/x64/runner/Release/libmpv-2.dll'),
+        );
+        final player = Player(
+          configuration: const PlayerConfiguration(
+            vo: 'null',
+            protocolWhitelist: ['file', 'pipe'],
+          ),
+        );
+        try {
+          final native = player.platform as NativePlayer;
+          expect(await native.getProperty('hr-seek'), 'yes');
+          await native.setProperty('hr-seek', 'no');
+          expect(await native.getProperty('hr-seek'), 'no');
+          await native.setProperty('hr-seek', 'yes');
+          expect(await native.getProperty('hr-seek'), 'yes');
+        } finally {
+          await player.dispose();
+        }
+      },
+    );
   }, skip: !Platform.isWindows);
 }

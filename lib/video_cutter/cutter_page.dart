@@ -67,7 +67,8 @@ class _CutterPageState extends State<CutterPage> {
     if (Platform.isAndroid) {
       _scrubber = PreviewScrubber(
         pause: () => _control((player) => player.pause()),
-        seek: (target) => _control((player) => player.seek(target)),
+        preview: (target) => _seek(target, exact: false),
+        seek: (target) => _seek(target, exact: true),
       );
     }
     _lifecycle = AppLifecycleListener(
@@ -200,6 +201,21 @@ class _CutterPageState extends State<CutterPage> {
     } finally {
       _seeking = false;
     }
+  }
+
+  Future<void> _seek(Duration target, {required bool exact}) async {
+    final player = _player;
+    if (player == null) return;
+    try {
+      await (player.platform as NativePlayer).setProperty(
+        'hr-seek',
+        exact ? 'yes' : 'no',
+      );
+    } catch (error) {
+      _notice = 'Preview: $error';
+      _refresh();
+    }
+    await _control((player) => player.seek(target));
   }
 
   Future<void> _chooseFolder() async {

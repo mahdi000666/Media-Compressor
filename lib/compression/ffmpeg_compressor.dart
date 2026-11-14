@@ -110,7 +110,8 @@ final class FfmpegCompressor {
             for (final section in sections) ...[
               "file '$path'",
               'inpoint ${_seconds(section.start)}',
-              'outpoint ${_seconds(section.end)}',
+              // concat stops at the first packet past outpoint; 2 s covers the interleaved audio chunk.
+              'outpoint ${_seconds(section.end + _cutReadMargin)}',
               'duration ${_seconds(section.end - section.start)}',
             ],
             '',
@@ -125,7 +126,21 @@ final class FfmpegCompressor {
         ],
         ?filter,
       ];
-      final args = <String>[
+      final softwareVideoArgs = <String>[
+        '-c:v',
+        'libx264',
+        '-preset',
+        // Phone CPUs are much slower; veryfast roughly halves x264 time.
+        Platform.isAndroid ? 'veryfast' : 'medium',
+        '-crf',
+        [28, 23, 18][quality.index].toString(),
+        '-pix_fmt',
+        'yuv420p',
+      ];
+      final videoAttempts = Platform.isAndroid && video
+          ? [..._androidHardwareArgs(quality, maxEdge), softwareVideoArgs]
+          : [softwareVideoArgs];
+      List<String> buildArgs(List<String> videoEncoderArgs) => [
         '-hide_banner',
         '-loglevel',
         'error',
@@ -160,14 +175,7 @@ final class FfmpegCompressor {
         if (video) ...[
           '-map',
           '0:a:0?',
-          '-c:v',
-          'libx264',
-          '-preset',
-          'medium',
-          '-crf',
-          [28, 23, 18][quality.index].toString(),
-          '-pix_fmt',
-          'yuv420p',
+          ...videoEncoderArgs,
           '-c:a',
           'aac',
           '-b:a',
@@ -199,10 +207,32 @@ final class FfmpegCompressor {
         output.path,
       ];
       if (_cancelled) return null;
-      final exitCode = Platform.isAndroid
-          ? await _runAndroid(args, onProgress)
-          : await _runProcess(args, onProgress);
-      if (_cancelled) return null;
+      Future<int> outputLength() async {
+        try {
+          return await File(output.path).length();
+        } on FileSystemException {
+          return 0;
+        }
+      }
+
+      late ({int code, String errors}) exitCode;
+      for (var index = 0; index < videoAttempts.length; index++) {
+        if (index > 0) {
+          try {
+            await File(output.path).delete();
+          } on FileSystemException {
+            // The next attempt uses -n and will report the real failure.
+          }
+          if (_cancelled) return null;
+          onProgress?.call(Duration.zero);
+        }
+        exitCode = Platform.isAndroid
+            ? await _runAndroid(buildArgs(videoAttempts[index]), onProgress)
+            : await _runProcess(buildArgs(videoAttempts[index]), onProgress);
+        final size = await outputLength();
+        if (_cancelled) return null;
+        if (exitCode.code == 0 && size > 0) break;
+      }
       if (exitCode.code != 0) {
         throw CompressionFailure(
           exitCode.errors.trim().isEmpty
@@ -211,7 +241,7 @@ final class FfmpegCompressor {
           shared: exitCode.errors.toLowerCase().contains('no space left'),
         );
       }
-      if (await File(output.path).length() == 0) {
+      if (await outputLength() == 0) {
         throw const CompressionFailure('FFmpeg produced an empty file.');
       }
       _outputs[output] = workspace;
@@ -277,6 +307,42 @@ final class FfmpegCompressor {
     await Future.wait([stdout, stderr]);
     return (code: code, errors: errors);
   }
+
+  /// MediaCodec is far faster than x264 on a phone. Planar input avoids a
+  /// swscale conversion when the decoder already produces YUV420P; some
+  /// devices only accept NV12, so try both before falling back to x264.
+  static List<List<String>> _androidHardwareArgs(
+    CompressionQuality quality,
+    int? maxEdge,
+  ) {
+    final bitrate = _androidBitrate(quality, maxEdge);
+    return [
+      for (final pixFmt in ['yuv420p', 'nv12'])
+        [
+          '-c:v',
+          'h264_mediacodec',
+          '-bitrate_mode',
+          'vbr',
+          '-b:v',
+          '$bitrate',
+          '-pix_fmt',
+          pixFmt,
+        ],
+    ];
+  }
+
+  static int _androidBitrate(CompressionQuality quality, int? maxEdge) {
+    final base = [1000000, 2000000, 4000000][quality.index];
+    final scale = switch (maxEdge) {
+      null => 1.0,
+      >= 1920 => 1.0,
+      >= 1280 => 0.65,
+      _ => 0.4,
+    };
+    return (base * scale).round();
+  }
+
+  static const _cutReadMargin = Duration(seconds: 2);
 
   static String _seconds(Duration value) =>
       (value.inMicroseconds / Duration.microsecondsPerSecond).toStringAsFixed(
